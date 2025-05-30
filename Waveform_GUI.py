@@ -103,7 +103,7 @@ class WaveformGUI:
             ax.clear()
 
         # Plot original
-        self.axes[0].plot(t, f)
+        self.axes[0].plot(t, f, '.')
         self.axes[0].set_title("Voltage vs Time")
         self.axes[0].set_xlabel("Time (s)")
         self.axes[0].set_ylabel("Voltage")
