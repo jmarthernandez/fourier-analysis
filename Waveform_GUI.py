@@ -11,11 +11,25 @@ class WaveformGUI:
         self.root = root
         self.root.title("Waveform Generator")
 
+        style = ttk.Style(self.root)
+        style.theme_use("xpnative")
+
         self.entries = []
         self.type_vars = []
         self.freq_change_vars = []
         self.t_naught_vars = []
-        self.frames = []
+
+        self.total_time_var = tk.DoubleVar()
+        self.sampling_rate_var = tk.DoubleVar()
+
+        self.linear_factor = tk.DoubleVar(value=1.0)
+        self.quadratic_factor = tk.DoubleVar(value=1.0)
+        self.exponential_factor = tk.DoubleVar(value=1.0)
+        self.envelope_factor = tk.DoubleVar(value=1.0)
+        self.meu = tk.DoubleVar(value=0.5)
+        self.sigma = tk.DoubleVar(value=0.1)
+
+
 
         self.setup_controls()
         self.setup_plot()
@@ -25,12 +39,31 @@ class WaveformGUI:
         notebook.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
 
         general_frame = ttk.Frame(notebook)
-        waveform_frame = ttk.Frame(notebook)
+        self.waveform_frame = ttk.Frame(notebook)
         export_frame = ttk.Frame(notebook)
 
         notebook.add(general_frame, text='General Settings')
-        notebook.add(waveform_frame, text='Waveform Components')
+        notebook.add(self.waveform_frame, text='Waveform Components')
         notebook.add(export_frame, text='Export Options')
+
+        # Add buttons in waveform tab
+        # Add top control row
+        control_frame = ttk.Frame(self.waveform_frame)
+        control_frame.grid(row=0, column=0, columnspan=6, sticky='w')
+
+        ttk.Button(control_frame, text="Add Sin", command=lambda: self.add_function('sin')).grid(row=0, column=0, padx=5, pady=5)
+        ttk.Button(control_frame, text="Add Cos", command=lambda: self.add_function('cos')).grid(row=0, column=1, padx=5, pady=5)
+
+        # Add header labels
+        ttk.Label(self.waveform_frame, text="Type").grid(row=1, column=0, padx=5)
+        ttk.Label(self.waveform_frame, text="Amplitude").grid(row=1, column=1, padx=5)
+        ttk.Label(self.waveform_frame, text="Frequency").grid(row=1, column=2, padx=5)
+        ttk.Label(self.waveform_frame, text="Phase").grid(row=1, column=3, padx=5)
+        ttk.Label(self.waveform_frame, text="Options").grid(row=1, column=4, padx=5)
+        ttk.Label(self.waveform_frame, text="").grid(row=1, column=5)  # Spacer for Remove button
+
+        self.current_row = 2  # Start dynamic rows below the header
+
 
         # General settings
         self.multiplier_type = tk.StringVar(value="linear")
@@ -45,57 +78,70 @@ class WaveformGUI:
         ttk.Spinbox(general_frame, from_=100, to=100000, textvariable=self.step_var, width=10).grid(row=0, column=1)
         ttk.Label(general_frame, text="dt (s)").grid(row=0, column=2)
         ttk.Entry(general_frame, textvariable=self.dt_var, width=10).grid(row=0, column=3)
-        self.total_time_label = ttk.Label(general_frame, text="Total time: 0.0")
-        self.total_time_label.grid(row=0, column=4)
-        self.sampling_rate_label = ttk.Label(general_frame, text="Sampling rate: 0.0 Hz")
-        self.sampling_rate_label.grid(row=0, column=5)
+        ttk.Label(general_frame, text="Total time (s)").grid(row=0, column=4)
+        ttk.Entry(general_frame, textvariable=self.total_time_var, width=10).grid(row=0, column=5)
+        ttk.Label(general_frame, text="Sampling rate (Hz)").grid(row=0, column=6)
+        ttk.Entry(general_frame, textvariable=self.sampling_rate_var, width=10).grid(row=0, column=7)
 
+        # Multiplier type selector
         ttk.Label(general_frame, text="Multiplier Type").grid(row=1, column=0)
-        ttk.Combobox(general_frame, textvariable=self.multiplier_type,
-                     values=["none", "linear", "quadratic", "exponential", "envelope"]).grid(row=1, column=1)
-        ttk.Label(general_frame, text="Factor").grid(row=1, column=2)
-        ttk.Entry(general_frame, textvariable=self.multiplier_factor, width=10).grid(row=1, column=3)
-        ttk.Label(general_frame, text="Meu").grid(row=1, column=4)
-        ttk.Entry(general_frame, textvariable=self.meu, width=10).grid(row=1, column=5)
-        ttk.Label(general_frame, text="Sigma").grid(row=1, column=6)
-        ttk.Entry(general_frame, textvariable=self.sigma, width=10).grid(row=1, column=7)
+        self.multiplier_type = tk.StringVar(value="none")
+        type_menu = ttk.Combobox(general_frame, textvariable=self.multiplier_type,
+                                values=["none", "linear", "quadratic", "exponential", "envelope"])
+        type_menu.grid(row=1, column=1)
+        type_menu.bind("<<ComboboxSelected>>", lambda e: self.update_multiplier_inputs())
 
-        ttk.Button(general_frame, text="Add Sin", command=lambda: self.add_function('sin', waveform_frame)).grid(row=2, column=0)
-        ttk.Button(general_frame, text="Add Cos", command=lambda: self.add_function('cos', waveform_frame)).grid(row=2, column=1)
+        # Frame to hold dynamic multiplier options
+        self.multiplier_frame = ttk.Frame(general_frame)
+        self.multiplier_frame.grid(row=1, column=2, columnspan=6, sticky='w')
+
         ttk.Button(general_frame, text="Plot", command=self.plot_waveform).grid(row=2, column=2)
 
         ttk.Button(export_frame, text="Save Config", command=self.save_config).pack()
         ttk.Button(export_frame, text="Load Config", command=self.load_config).pack()
 
-    def add_function(self, func_type, parent):
-        row = len(self.entries)
-        type_var = tk.StringVar(value=func_type)
-        self.type_vars.append(type_var)
+        self.dt_var.trace_add("write", lambda *args: self.update_from_dt())
+        self.step_var.trace_add("write", lambda *args: self.update_from_steps())
+        self.total_time_var.trace_add("write", lambda *args: self.update_from_total_time())
+        self.sampling_rate_var.trace_add("write", lambda *args: self.update_from_sampling_rate())
 
-        frame = ttk.Frame(parent)
-        frame.grid(row=row, column=0, sticky='w')
-        self.frames.append(frame)
+        self.update_multiplier_inputs()
+
+
+    def add_function(self, func_type):
+        row = self.current_row
+        self.current_row += 1
 
         amp = tk.DoubleVar(value=1)
         freq = tk.DoubleVar(value=1)
         phase = tk.DoubleVar(value=0)
         freq_change = tk.BooleanVar(value=False)
         t_naught = tk.DoubleVar(value=1.0)
-
-        ttk.Label(frame, text=func_type).grid(row=0, column=0)
-        ttk.Entry(frame, textvariable=amp, width=10).grid(row=0, column=1)
-        ttk.Entry(frame, textvariable=freq, width=10).grid(row=0, column=2)
-        ttk.Entry(frame, textvariable=phase, width=10).grid(row=0, column=3)
-
-        check = ttk.Checkbutton(frame, text="Frequency Change", variable=freq_change,
-                                command=lambda v=freq_change, f=frame, tn=t_naught: self.toggle_t_naught(v, f, tn))
-        check.grid(row=0, column=4)
-
-        ttk.Button(frame, text="Remove", command=lambda: self.remove_function(row)).grid(row=0, column=5)
+        type_var = tk.StringVar(value=func_type)
 
         self.entries.append((amp, freq, phase, freq_change, t_naught))
+        self.type_vars.append(type_var)
         self.freq_change_vars.append(freq_change)
         self.t_naught_vars.append(t_naught)
+
+        ttk.Label(self.waveform_frame, text=func_type).grid(row=row, column=0)
+        ttk.Entry(self.waveform_frame, textvariable=amp, width=10).grid(row=row, column=1)
+        ttk.Entry(self.waveform_frame, textvariable=freq, width=10).grid(row=row, column=2)
+        ttk.Entry(self.waveform_frame, textvariable=phase, width=10).grid(row=row, column=3)
+
+        def remove_this():
+            for widget in self.waveform_frame.grid_slaves(row=row):
+                widget.destroy()
+            self.entries[row - 2] = None  # Leave hole in list
+            self.type_vars[row - 2] = None
+            self.freq_change_vars[row - 2] = None
+            self.t_naught_vars[row - 2] = None
+
+        ttk.Checkbutton(self.waveform_frame, text="Freq Change", variable=freq_change,
+                        command=lambda: self.toggle_t_naught(freq_change, row, t_naught)).grid(row=row, column=4)
+
+        ttk.Button(self.waveform_frame, text="Remove", command=remove_this).grid(row=row, column=5)
+
 
     def remove_function(self, index):
         self.frames[index].destroy()
@@ -118,14 +164,59 @@ class WaveformGUI:
         toolbar.update()
         toolbar.pack(side=tk.BOTTOM, fill=tk.X)
 
+    def update_from_dt(self):
+        try:
+            dt = self.dt_var.get()
+            steps = int(self.total_time_var.get() / dt)
+            sampling_rate = 1 / dt
+
+            self.step_var.set(steps)
+            self.sampling_rate_var.set(sampling_rate)
+        except:
+            pass
+
+    def update_from_steps(self):
+        try:
+            dt = self.dt_var.get()
+            steps = int(self.step_var.get())
+            total_time = steps * dt
+            sampling_rate = 1 / dt
+
+            self.total_time_var.set(total_time)
+            self.sampling_rate_var.set(sampling_rate)
+        except:
+            pass
+
+    def update_from_total_time(self):
+        try:
+            dt = self.dt_var.get()
+            total_time = self.total_time_var.get()
+            steps = int(total_time / dt)
+
+            self.step_var.set(steps)
+        except:
+            pass
+
+    def update_from_sampling_rate(self):
+        try:
+            rate = self.sampling_rate_var.get()
+            dt = 1 / rate
+            self.dt_var.set(dt)
+        except:
+            pass
+
+
     def plot_waveform(self):
+        # force re-sync
+        self.update_from_steps()
+
         steps = int(self.step_var.get())
         dt = self.dt_var.get()
+
         t = np.arange(0, steps * dt, dt)
         total_time = steps * dt
         sampling_rate = 1 / dt
-        self.total_time_label.config(text=f"Total time: {total_time:.4f} s")
-        self.sampling_rate_label.config(text=f"Sampling rate: {sampling_rate:.2f} Hz")
+    
 
         f = np.zeros_like(t)
 
@@ -150,15 +241,23 @@ class WaveformGUI:
             elif func_type == 'cos':
                 f[:len(current_t)] += A * np.cos(2 * np.pi * wn_sq[:len(current_t)] * current_t + phi)
 
-        factor = self.multiplier_factor.get()
-        if self.multiplier_type.get() == "linear":
-            f *= factor * t
-        elif self.multiplier_type.get() == "quadratic":
-            f *= factor * t ** 2
-        elif self.multiplier_type.get() == "exponential":
-            f *= np.exp(factor * t)
-        elif self.multiplier_type.get() == "envelope":
-            f *= np.exp(-((t - self.meu.get()) ** 2) / (2 * self.sigma.get() ** 2))
+        mode = self.multiplier_type.get()
+
+        if mode == "linear":
+            f *= self.linear_factor.get() * t
+
+        elif mode == "quadratic":
+            f *= self.linear_factor.get() * t + self.quadratic_factor.get() * t ** 2
+
+        elif mode == "exponential":
+            f *= np.exp(self.exponential_factor.get() * t)
+
+        elif mode == "envelope":
+            mu = self.meu.get()
+            sigma = self.sigma.get()
+            A = self.envelope_factor.get()
+            f *= A * np.exp(-((t - mu) ** 2) / (2 * sigma ** 2))
+
 
         for ax in self.axes:
             ax.clear()
@@ -216,6 +315,24 @@ class WaveformGUI:
     def load_config(self):
         with open("waveform_config.json", "r") as f:
             config = json.load(f)
+        
+                # Clear all waveform UI elements
+        for widget in self.waveform_frame.winfo_children():
+            widget.destroy()
+
+        self.entries.clear()
+        self.type_vars.clear()
+        self.freq_change_vars.clear()
+        self.t_naught_vars.clear()
+
+        # Rebuild header
+        ttk.Button(self.waveform_frame, text="Add Sin", command=lambda: self.add_function('sin')).grid(row=0, column=0, padx=5, pady=5, sticky='w')
+        ttk.Button(self.waveform_frame, text="Add Cos", command=lambda: self.add_function('cos')).grid(row=0, column=1, padx=5, pady=5, sticky='w')
+        ttk.Label(self.waveform_frame, text="Amplitude").grid(row=1, column=1, padx=5)
+        ttk.Label(self.waveform_frame, text="Frequency").grid(row=1, column=2, padx=5)
+        ttk.Label(self.waveform_frame, text="Phase").grid(row=1, column=3, padx=5)
+
+
         self.step_var.set(config['steps'])
         self.dt_var.set(config['dt'])
         self.multiplier_type.set(config['multiplier_type'])
@@ -241,7 +358,47 @@ class WaveformGUI:
             self.entries[i][3].set(entry['freq_change'])
             self.entries[i][4].set(entry['t_naught'])
 
+    def update_multiplier_inputs(self):
+    # Clear old widgets
+        for widget in self.multiplier_frame.winfo_children():
+            widget.destroy()
+
+        mode = self.multiplier_type.get()
+
+        if mode == "linear":
+            ttk.Label(self.multiplier_frame, text="Linear Factor").grid(row=0, column=0)
+            ttk.Entry(self.multiplier_frame, textvariable=self.linear_factor, width=10).grid(row=0, column=1)
+
+        elif mode == "quadratic":
+            ttk.Label(self.multiplier_frame, text="Linear Factor").grid(row=0, column=0)
+            ttk.Entry(self.multiplier_frame, textvariable=self.linear_factor, width=10).grid(row=0, column=1)
+            ttk.Label(self.multiplier_frame, text="Quadratic Factor").grid(row=0, column=2)
+            ttk.Entry(self.multiplier_frame, textvariable=self.quadratic_factor, width=10).grid(row=0, column=3)
+
+        elif mode == "exponential":
+            ttk.Label(self.multiplier_frame, text="Exponential Factor").grid(row=0, column=0)
+            ttk.Entry(self.multiplier_frame, textvariable=self.exponential_factor, width=10).grid(row=0, column=1)
+
+        elif mode == "envelope":
+            ttk.Label(self.multiplier_frame, text="Factor (A)").grid(row=0, column=0)
+            ttk.Entry(self.multiplier_frame, textvariable=self.envelope_factor, width=10).grid(row=0, column=1)
+            ttk.Label(self.multiplier_frame, text="Mu").grid(row=0, column=2)
+            ttk.Entry(self.multiplier_frame, textvariable=self.meu, width=10).grid(row=0, column=3)
+            ttk.Label(self.multiplier_frame, text="Sigma").grid(row=0, column=4)
+            ttk.Entry(self.multiplier_frame, textvariable=self.sigma, width=10).grid(row=0, column=5)
+
+    def toggle_t_naught(self, var, row, t_naught):
+        for widget in self.waveform_frame.grid_slaves(row=row+1):
+            widget.destroy()
+
+        if var.get():
+            ttk.Label(self.waveform_frame, text="t_naught").grid(row=row+1, column=4)
+            ttk.Entry(self.waveform_frame, textvariable=t_naught, width=10).grid(row=row+1, column=5)
+
+
+
 if __name__ == "__main__":
     root = tk.Tk()
     app = WaveformGUI(root)
-    root.mainloop()
+    root.mainloop() 
+    
